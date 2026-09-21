@@ -25,6 +25,7 @@
   - [Custom Recovery behavior](#custom-recovery-behavior)
   - [Using BasicAuth() middleware](#using-basicauth-middleware)
   - [Goroutines inside a middleware](#goroutines-inside-a-middleware)
+  - [Request timeout](#request-timeout)
 - [Logging](#logging)
   - [How to write log file](#how-to-write-log-file)
   - [Custom Log Format](#custom-log-format)
@@ -645,6 +646,68 @@ func main() {
   r.Run(":8080")
 }
 ```
+
+### Request timeout
+
+`gin.Timeout` bounds the execution time of the remaining handler chain. When the
+deadline passes, the chain is abandoned and a unified JSON response is returned:
+
+```go
+func main() {
+  r := gin.Default()
+
+  // Register Recovery before Timeout so panics from timed handlers are
+  // recovered on the request goroutine.
+  api := r.Group("/api", gin.Timeout(2*time.Second))
+  api.GET("/report", func(c *gin.Context) {
+    // Honor c.Request.Context(): it is cancelled on timeout and on
+    // client disconnect, and propagates to binding, streaming and any
+    // background callbacks started from this handler.
+    if err := generateReport(c.Request.Context()); err != nil {
+      return // ctx.Err() != nil: the timeout response was already sent
+    }
+    c.JSON(http.StatusOK, gin.H{"status": "done"})
+  })
+
+  // SSE / long-polling routes stay outside the timed group: Timeout
+  // buffers the whole response, so nothing would reach the client until
+  // the handler returns or the deadline expires.
+  r.GET("/events", func(c *gin.Context) {
+    for {
+      select {
+      case <-c.Request.Context().Done():
+        return
+      case ev := <-events():
+        c.SSEvent("message", ev)
+        c.Writer.Flush()
+      }
+    }
+  })
+
+  r.Run(":8080")
+}
+```
+
+Semantics and limitations:
+
+- The remaining chain runs in a separate goroutine against a copy of the
+  context whose request carries a `context.WithTimeout` derived from the
+  incoming request. Cancellation (deadline or client disconnect) is visible
+  through `c.Request.Context()` to binding, streaming handlers and
+  background callbacks.
+- While the chain runs, all writes are buffered. On completion the buffered
+  status, headers and body are flushed unchanged.
+- On timeout, a response the handler already committed (status or body) is
+  delivered as-is; its status code is never overwritten. Otherwise
+  `{"error":"request timeout"}` is written with status 503
+  (`gin.DefaultTimeoutStatus`). Customize both with
+  `gin.WithTimeoutStatus` and `gin.WithTimeoutResponse`.
+- The budget is per request and applies to every route of the group the
+  middleware is attached to, including nested groups.
+- Handlers that ignore `c.Request.Context()` keep running in the
+  background after the timeout response is sent; always honor the context
+  so the middleware can reclaim its goroutine. The internal timer is
+  released as soon as the request finishes.
 
 ## Logging
 

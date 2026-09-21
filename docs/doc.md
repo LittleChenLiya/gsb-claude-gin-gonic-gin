@@ -18,6 +18,7 @@
     - [Multiple files](#multiple-files)
   - [Grouping routes](#grouping-routes)
   - [Redirects](#redirects)
+  - [Named routes and URL generation](#named-routes-and-url-generation)
 - [Middleware](#middleware)
   - [Blank Gin without middleware by default](#blank-gin-without-middleware-by-default)
   - [Using middleware](#using-middleware)
@@ -440,6 +441,76 @@ r.GET("/test2", func(c *gin.Context) {
 })
 ```
 
+### Named routes and URL generation
+
+Routes can be registered with a name and later reversed into a URL with
+`URLFor`, so links do not break when group prefixes change. Names are unique
+per `Engine` across all HTTP methods; different engines may reuse the same
+name. The final absolute path (including all nested group prefixes) is the
+basis for URL generation.
+
+```go
+r := gin.Default()
+v1 := r.Group("/api/v1")
+if err := v1.NamedGET("user.show", "/users/:id", handler); err != nil {
+  // name already registered: nothing was added to the route tree
+}
+
+url, err := r.URLFor("user.show",
+  map[string]string{"id": "42"},
+  neturl.Values{"tag": {"a", "b"}})
+// url == "/api/v1/users/42?tag=a&tag=b"
+```
+
+`NamedHandle` and the `NamedGET`/`NamedPOST`/... shortcuts return an error
+instead of registering anything when the name is empty or already taken, so a
+failed registration never leaves a route in the tree without a name nor a
+name without a route. Register all routes before the engine starts serving
+requests; afterwards `URLFor` only reads the immutable index and is safe for
+concurrent use without locking.
+
+Path parameters are escaped exactly once with `url.PathEscape`:
+
+- a regular `:param` occupies one path segment; embedded slashes become `%2F`
+- a catch-all `*param` may contain slashes and is escaped segment by segment;
+  `.` and `..` segments are rejected so a generated URL can never escape the
+  route prefix
+- query values use `url.Values.Encode`: keys are sorted and repeated values
+  for the same key are preserved
+
+`URLFor` returns distinguishable errors (match with `errors.Is`):
+
+| Error | Cause |
+|-------|-------|
+| `gin.ErrRouteNameNotFound` | unknown route name |
+| `gin.ErrRouteMissingParam` | a declared path parameter was not supplied |
+| `gin.ErrRouteExtraParam` | a supplied parameter is not declared by the route |
+| `gin.ErrRouteEmptyParam` | a regular `:param` received an empty value |
+| `gin.ErrRouteUnsafeParam` | a parameter value is or contains a `.`/`..` segment |
+
+Registration returns `gin.ErrRouteNameConflict` for a duplicate name and
+`gin.ErrRouteEmptyName` for an empty name.
+
+#### Matching generated URLs with escaped slashes
+
+By default Gin matches requests on the decoded `URL.Path`, so a generated
+`%2F` arrives as a literal `/` and will not match a single `:param` segment.
+To round-trip parameters whose values contain slashes, enable `UseRawPath`
+(with `UnescapePathValues`, the default) so matching uses the escaped path
+and parameter values are unescaped back to their original form:
+
+```go
+r := gin.New()
+r.UseRawPath = true
+r.UnescapePathValues = true
+_ = r.NamedGET("item", "/items/:id", func(c *gin.Context) {
+  // GET /items/a%2Fb -> c.Param("id") == "a/b"
+})
+```
+
+With `UseEscapedPath` the same applies to `URL.EscapedPath()`. If
+`UnescapePathValues` is disabled while matching on the raw/escaped path,
+`c.Param` returns the still-escaped value (e.g. `a%2Fb`) instead.
 ## Middleware
 
 > Configure middleware for request processing, authentication, and error recovery.

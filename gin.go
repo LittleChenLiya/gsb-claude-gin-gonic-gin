@@ -199,6 +199,7 @@ type Engine struct {
 	maxSections      uint16
 	trustedProxies   []string
 	trustedCIDRs     []*net.IPNet
+	namedRoutes      map[string]*namedRoute
 }
 
 var _ IRouter = (*Engine)(nil)
@@ -234,6 +235,7 @@ func New(opts ...OptionFunc) *Engine {
 		MaxMultipartMemory:     defaultMultipartMemory,
 		ReadHeaderTimeout:      defaultReadHeaderTimeout,
 		trees:                  make(methodTrees, 0, 9),
+		namedRoutes:            make(map[string]*namedRoute),
 		delims:                 render.Delims{Left: "{{", Right: "}}"},
 		secureJSONPrefix:       "while(1);",
 		trustedProxies:         []string{"0.0.0.0/0", "::/0"},

@@ -25,6 +25,7 @@
   - [Custom Recovery behavior](#custom-recovery-behavior)
   - [Using BasicAuth() middleware](#using-basicauth-middleware)
   - [Goroutines inside a middleware](#goroutines-inside-a-middleware)
+  - [Request timeout and cancellation](#request-timeout-and-cancellation)
 - [Logging](#logging)
   - [How to write log file](#how-to-write-log-file)
   - [Custom Log Format](#custom-log-format)
@@ -644,6 +645,75 @@ func main() {
   // Listen and serve on 0.0.0.0:8080
   r.Run(":8080")
 }
+```
+
+### Request timeout and cancellation
+
+`gin.Timeout` (or the configurable `gin.TimeoutWith`) bounds how long the
+remaining handler chain may run and propagates cancellation to downstream
+code through `c.Request.Context()`.
+
+```go
+func main() {
+  r := gin.New()
+
+  // Recovery must be registered BEFORE Timeout so panics re-thrown by the
+  // timeout middleware are recovered (see ordering semantics below).
+  r.Use(gin.Recovery())
+
+  // Apply one deadline to a whole (nested) route group.
+  api := r.Group("/api", gin.Timeout(2*time.Second))
+  api.GET("/report", reportHandler)
+
+  // Or configure the timeout response per route.
+  r.GET("/slow", gin.TimeoutWith(gin.TimeoutOptions{
+    Timeout: 100 * time.Millisecond,
+    Handler: func(c *gin.Context) {
+      c.AbortWithStatusJSON(http.StatusGatewayTimeout, gin.H{"error": "too slow"})
+    },
+  }), slowHandler)
+
+  r.Run(":8080")
+}
+```
+
+Semantics:
+
+- **Timeout response**: when the deadline fires and the chain has not written
+  anything yet, the chain is abandoned and a unified JSON body
+  `{"error":"request timeout"}` is returned with status `503`
+  (`gin.DefaultTimeoutStatusCode`). Use `TimeoutOptions.Handler` to
+  customize it.
+- **Already written responses are never overridden**: if the chain already
+  wrote a status code (or flushed), the timeout keeps that status and commits
+  what was written instead of emitting the timeout JSON.
+- **Cancellation propagation**: the request context is wrapped with
+  `context.WithTimeout`, so binding, streaming loops and background
+  callbacks that select on `c.Request.Context().Done()` observe both the
+  deadline and client disconnects. On a client disconnect nothing is written
+  and no timer or goroutine is leaked: the timer is always stopped and the
+  internal goroutine never blocks on completion.
+- **Nested routes**: the middleware applies to the remaining handler chain of
+  every route it is registered on (engine, group, or single route). Nested
+  timeouts compose through context deadlines — the tightest deadline wins.
+- **SSE / long-polling**: responses are buffered until the chain returns or
+  calls `c.Writer.Flush()`. After the first flush the status and headers are
+  committed and stream through; a later timeout can then only cancel the
+  context, so streaming handlers must select on
+  `c.Request.Context().Done()` to stop.
+- **Recovery ordering**: panics inside the chain are re-thrown in the
+  middleware goroutine, so `r.Use(gin.Recovery(), gin.Timeout(d))` recovers
+  them with a 500. Registering Recovery after Timeout also works — it then
+  recovers the panic inside the chain itself.
+- **Limitations**: handlers that keep working after the deadline MUST stop
+  when `c.Request.Context()` is done; otherwise they race with the reuse of
+  the `*gin.Context` for the next request. Hijacked (e.g. WebSocket)
+  connections switch to pass-through mode and are no longer supervised.
+
+Verify with the deterministic tests in `timeout_test.go`:
+
+```sh
+go test -run 'TestTimeout' .
 ```
 
 ## Logging

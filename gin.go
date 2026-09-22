@@ -197,6 +197,7 @@ type Engine struct {
 	trees            methodTrees
 	maxParams        uint16
 	maxSections      uint16
+	namedRoutes      map[string]*namedRoute
 	trustedProxies   []string
 	trustedCIDRs     []*net.IPNet
 }
@@ -234,6 +235,7 @@ func New(opts ...OptionFunc) *Engine {
 		MaxMultipartMemory:     defaultMultipartMemory,
 		ReadHeaderTimeout:      defaultReadHeaderTimeout,
 		trees:                  make(methodTrees, 0, 9),
+		namedRoutes:            make(map[string]*namedRoute),
 		delims:                 render.Delims{Left: "{{", Right: "}}"},
 		secureJSONPrefix:       "while(1);",
 		trustedProxies:         []string{"0.0.0.0/0", "::/0"},

@@ -17,6 +17,7 @@
     - [Single file](#single-file)
     - [Multiple files](#multiple-files)
   - [Grouping routes](#grouping-routes)
+  - [Named routes and URL generation](#named-routes-and-url-generation)
   - [Redirects](#redirects)
 - [Middleware](#middleware)
   - [Blank Gin without middleware by default](#blank-gin-without-middleware-by-default)
@@ -409,6 +410,98 @@ func main() {
   router.Run(":8080")
 }
 ```
+
+### Named routes and URL generation
+
+Routes can be registered with a name, and URLs can be generated later from
+that name with `Engine.URLFor`. Names are unique per `Engine` across all
+HTTP methods; different engines may reuse the same names independently. The
+generated path is the final absolute path, including all nested group
+prefixes, so regrouping routes only requires changing the registration, not
+the call sites.
+
+```go
+func main() {
+  router := gin.Default()
+
+  v1 := router.Group("/api").Group("/v1")
+  if err := v1.NamedGET("user.show", "/users/:id", showUser); err != nil {
+    panic(err)
+  }
+  if err := v1.NamedGET("file.download", "/files/*filepath", downloadFile); err != nil {
+    panic(err)
+  }
+
+  // "/api/v1/users/42"
+  url, _ := router.URLFor("user.show", gin.Params{{Key: "id", Value: "42"}}, nil)
+
+  // "/api/v1/files/a/b.txt?inline=1&tag=x&tag=y"
+  q := url.Values{"inline": {"1"}, "tag": {"x", "y"}}
+  url, _ = router.URLFor("file.download", gin.Params{{Key: "filepath", Value: "a/b.txt"}}, q)
+
+  router.Run(":8080")
+}
+```
+
+Registration uses `NamedHandle` and the `NamedGET`/`NamedPOST`/`NamedPUT`/
+`NamedPATCH`/`NamedDELETE`/`NamedOPTIONS`/`NamedHEAD` shortcuts, all of
+which return an `error`. Registering a name that already exists fails with
+`ErrRouteNameConflict` (even for a different HTTP method) and leaves both the
+route tree and the name index untouched, so a failed registration never
+produces a route without a name. Register all named routes before the engine
+starts serving requests; afterwards the name index is immutable and
+`URLFor` performs read-only lookups that are safe for concurrent use without
+any lock.
+
+Escaping rules used by `URLFor`:
+
+- A normal `:param` fills exactly one path segment. A slash in its value is
+  escaped as `%2F`, and Unicode, `%`, spaces and `?` are escaped exactly
+  once (never double-encoded).
+- A catch-all `*param` fills one or more segments: the value is split on
+  `/` and each segment is escaped individually. Dot segments (`.` and
+  `..`) are percent-encoded (`%2E`, `%2E%2E`) so a parameter value can
+  never traverse out of the route prefix.
+- Query parameters are encoded with `url.Values.Encode`: keys are sorted
+  for a stable order and repeated keys keep all of their values.
+
+`URLFor` returns a distinguishable error for each failure class:
+
+| Error | Meaning |
+| ----- | ------- |
+| `ErrRouteNotFound` | no route registered with the given name |
+| `ErrURLMissingParam` | a path parameter required by the template is missing |
+| `ErrURLEmptyParam` | a path parameter value is empty |
+| `ErrURLExtraParams` | parameters were supplied that the template does not declare |
+| `ErrRouteNameEmpty` | registration with an empty name |
+| `ErrRouteNameConflict` | registration with a name that is already taken |
+| `ErrInvalidHTTPMethod` | registration with an invalid HTTP method |
+
+#### Matching URLs that contain escaped slashes
+
+By default Gin matches on the already unescaped `URL.Path`, so a generated
+URL whose parameter contains `%2F` (an escaped slash) would be seen as two
+segments and would not match its route. To round-trip such URLs back to the
+same route, enable `UseRawPath` (or `UseEscapedPath`) together with
+`UnescapePathValues`:
+
+```go
+router := gin.New()
+router.UseRawPath = true        // match on the escaped path
+router.UnescapePathValues = true // then unescape parameter values
+
+router.NamedGET("user.show", "/users/:id", func(c *gin.Context) {
+  c.String(http.StatusOK, c.Param("id"))
+})
+
+// Generates "/users/a%2Fb"; a request to that URL matches the route and
+// c.Param("id") returns "a/b".
+u, _ := router.URLFor("user.show", gin.Params{{Key: "id", Value: "a/b"}}, nil)
+```
+
+Values that need no escaping inside a segment (including Unicode, which the
+client sends percent-encoded but `URL.Path` already holds unescaped)
+round-trip with the default configuration as well.
 
 ### Redirects
 

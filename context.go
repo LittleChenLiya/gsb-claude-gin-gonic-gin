@@ -937,6 +937,15 @@ func (c *Context) ShouldBindUri(obj any) error {
 	return binding.Uri.BindUri(m, obj)
 }
 
+// ShouldBindUriWith binds the route parameters of the current request using a
+// precompiled explicit UriBinder. Unlike ShouldBindUri it performs no
+// per-request reflection over tags and never re-parses the URL: the Params
+// matched by the router are converted directly. On failure the destination is
+// left untouched.
+func (c *Context) ShouldBindUriWith(b *UriBinder, obj any) error {
+	return b.BindContext(c, obj)
+}
+
 // ShouldBindWith binds the passed struct pointer using the specified binding engine.
 // See the binding package.
 func (c *Context) ShouldBindWith(obj any, b binding.Binding) error {

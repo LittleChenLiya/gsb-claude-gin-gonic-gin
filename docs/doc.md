@@ -40,6 +40,7 @@
   - [Bind default value if none provided](#bind-default-value-if-none-provided)
     - [Collection format for arrays](#collection-format-for-arrays)
   - [Bind Uri](#bind-uri)
+  - [Explicit precompiled URI binder (`gin.UriBinder`)](uri_plan_binder.md)
   - [Bind custom unmarshaler](#bind-custom-unmarshaler)
   - [Bind Header](#bind-header)
   - [Bind HTML checkboxes](#bind-html-checkboxes)
@@ -1268,6 +1269,13 @@ Test it with:
 curl -v localhost:8088/thinkerou/987fbc97-4bed-5078-9f07-9141ba07c9f3
 curl -v localhost:8088/thinkerou/not-uuid
 ```
+
+For a precompiled, allocation-light alternative that binds the router's `Params`
+directly (no URL re-parsing), rejects duplicate parameter names at startup,
+reports required/range/custom-conversion errors with the route parameter name,
+and never leaves a half-populated struct, see the explicit
+[`gin.UriBinder` guide](uri_plan_binder.md). `ShouldBindUri` itself is
+unchanged and remains fully supported.
 
 ### Bind custom unmarshaler
 

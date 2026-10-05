@@ -265,7 +265,7 @@ func (c *Context) Error(err error) *Error {
 	}
 
 	var parsedError *Error
-	ok := errors.As(err, &parsedError)
+	ok := asGinError(err, &parsedError)
 	if !ok {
 		parsedError = &Error{
 			Err:  err,

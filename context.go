@@ -937,6 +937,23 @@ func (c *Context) ShouldBindUri(obj any) error {
 	return binding.Uri.BindUri(m, obj)
 }
 
+// BindURIPlan binds the route parameters in c.Params to obj using the
+// precompiled explicit binding plan.
+//
+// The plan converts the parameters it matches directly from c.Params without
+// building an intermediate map and without re-parsing the URL. Every matched
+// parameter is converted at most once; if any parameter is missing, out of
+// range or fails to convert, obj is left untouched and the returned error
+// carries the route parameter name.
+// It will abort the request with HTTP 400 if any error occurs.
+func (c *Context) BindURIPlan(plan *binding.URIPlan, obj any) error {
+	if err := plan.Bind(c.Params, obj); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err).SetType(ErrorTypeBind) //nolint: errcheck
+		return err
+	}
+	return nil
+}
+
 // ShouldBindWith binds the passed struct pointer using the specified binding engine.
 // See the binding package.
 func (c *Context) ShouldBindWith(obj any, b binding.Binding) error {
